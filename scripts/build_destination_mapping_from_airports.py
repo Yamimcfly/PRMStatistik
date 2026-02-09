@@ -24,6 +24,7 @@ def main() -> None:
     cols = {c.lower(): c for c in full_df.columns}
     iata_col = cols.get("iata") or cols.get("code")
     name_col = cols.get("name")
+    city_col = cols.get("city")
 
     if not iata_col or not name_col:
         raise ValueError(
@@ -32,6 +33,10 @@ def main() -> None:
 
     map_df = full_df[[iata_col, name_col]].rename(columns={iata_col: "IATA", name_col: "Name"})
     map_df = map_df.dropna(subset=["IATA", "Name"]).copy()
+    if city_col:
+        city_df = full_df[[iata_col, city_col]].rename(columns={iata_col: "IATA", city_col: "Name"})
+        city_df = city_df.dropna(subset=["IATA", "Name"]).copy()
+        map_df = pd.concat([map_df, city_df], ignore_index=True)
     map_df["IATA"] = map_df["IATA"].astype(str).str.strip().str.upper()
     map_df["Name"] = map_df["Name"].astype(str).str.strip()
     map_df = map_df[map_df["IATA"].str.len() == 3]

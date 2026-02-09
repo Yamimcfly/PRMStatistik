@@ -28,6 +28,12 @@ def init_db():
                 ddl = "ALTER TABLE prm_announcements ADD COLUMN airport_code VARCHAR(3)"
             with _engine.begin() as conn:
                 conn.execute(text(ddl))
+        if "airline_raw" not in columns:
+            ddl = "ALTER TABLE prm_announcements ADD COLUMN airline_raw TEXT"
+            if _engine.dialect.name == "postgresql":
+                ddl = "ALTER TABLE prm_announcements ADD COLUMN airline_raw VARCHAR(255)"
+            with _engine.begin() as conn:
+                conn.execute(text(ddl))
 
     if inspector.has_table("ref_destination"):
         columns = {c["name"] for c in inspector.get_columns("ref_destination")}
@@ -35,5 +41,38 @@ def init_db():
             ddl = "ALTER TABLE ref_destination ADD COLUMN display_name TEXT"
             if _engine.dialect.name == "postgresql":
                 ddl = "ALTER TABLE ref_destination ADD COLUMN display_name VARCHAR(255)"
+            with _engine.begin() as conn:
+                conn.execute(text(ddl))
+        if "mapping_source" not in columns:
+            ddl = "ALTER TABLE ref_destination ADD COLUMN mapping_source TEXT"
+            if _engine.dialect.name == "postgresql":
+                ddl = "ALTER TABLE ref_destination ADD COLUMN mapping_source VARCHAR(20)"
+            with _engine.begin() as conn:
+                conn.execute(text(ddl))
+
+    if inspector.has_table("ref_wch_type"):
+        columns = {c["name"] for c in inspector.get_columns("ref_wch_type")}
+        if "mapping_source" not in columns:
+            ddl = "ALTER TABLE ref_wch_type ADD COLUMN mapping_source TEXT"
+            if _engine.dialect.name == "postgresql":
+                ddl = "ALTER TABLE ref_wch_type ADD COLUMN mapping_source VARCHAR(20)"
+            with _engine.begin() as conn:
+                conn.execute(text(ddl))
+
+    if inspector.has_table("ref_airline_map"):
+        columns = {c["name"] for c in inspector.get_columns("ref_airline_map")}
+        if "mapping_source" not in columns:
+            ddl = "ALTER TABLE ref_airline_map ADD COLUMN mapping_source TEXT"
+            if _engine.dialect.name == "postgresql":
+                ddl = "ALTER TABLE ref_airline_map ADD COLUMN mapping_source VARCHAR(20)"
+            with _engine.begin() as conn:
+                conn.execute(text(ddl))
+
+    if inspector.has_table("ref_flight_destination"):
+        columns = {c["name"] for c in inspector.get_columns("ref_flight_destination")}
+        if "mapping_source" not in columns:
+            ddl = "ALTER TABLE ref_flight_destination ADD COLUMN mapping_source TEXT"
+            if _engine.dialect.name == "postgresql":
+                ddl = "ALTER TABLE ref_flight_destination ADD COLUMN mapping_source VARCHAR(20)"
             with _engine.begin() as conn:
                 conn.execute(text(ddl))

@@ -12,7 +12,8 @@
     "import_dir": "data",
     "export_dir": "data",
     "wch_mapping_file": "Q:\\path\\to\\WCH_Typ_reinform.xlsx",
-    "destination_mapping_file": "Q:\\path\\to\\Destination_3letter.xlsx"
+    "destination_mapping_file": "Q:\\path\\to\\Destination_3letter.xlsx",
+    "airline_mapping_file": "Q:\\path\\to\\airlines.json"
   },
   "gui": {
     "width": 1100,

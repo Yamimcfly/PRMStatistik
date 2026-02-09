@@ -33,6 +33,7 @@ IMPORT_DIR = Path(_cfg("paths.import_dir", str(DATA_DIR)))
 EXPORT_DIR = Path(_cfg("paths.export_dir", str(DATA_DIR)))
 WCH_MAPPING_FILE = _cfg("paths.wch_mapping_file", "")
 DESTINATION_MAPPING_FILE = _cfg("paths.destination_mapping_file", "")
+AIRLINE_MAPPING_FILE = _cfg("paths.airline_mapping_file", "")
 
 GUI_SETTINGS = _cfg("gui", {"width": 1100, "height": 700})
 FILTER_DEFAULTS = _cfg("filters.default", {})

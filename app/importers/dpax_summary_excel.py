@@ -20,10 +20,18 @@ def _find_header_row(raw: pd.DataFrame) -> Optional[int]:
 
 def can_handle(path: str) -> bool:
     try:
-        raw = pd.read_excel(path, sheet_name=0, header=None, nrows=30)
+        raw = pd.read_excel(path, sheet_name=0, header=None, nrows=60)
     except Exception:
         return False
-    return _find_header_row(raw) is not None
+    if _find_header_row(raw) is None:
+        return False
+
+    # Avoid matching Passenger Detail Report files that include a summary block.
+    for i in range(len(raw)):
+        row = [str(v).strip() for v in raw.iloc[i].tolist()]
+        if "Operation Date" in row and "Request Airline" in row and "SSR Code" in row:
+            return False
+    return True
 
 
 def load_dpax_summary(path: str) -> pd.DataFrame:

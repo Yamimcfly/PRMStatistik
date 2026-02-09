@@ -64,7 +64,14 @@ def load_wch_mapping(path: str, session) -> int:
 
     updated = 0
     for key, (code, category) in mapping.items():
-        session.merge(RefWchType(raw_value=key, category_code=code, category_name=category))
+        session.merge(
+            RefWchType(
+                raw_value=key,
+                category_code=code,
+                category_name=category,
+                mapping_source="auto",
+            )
+        )
         updated += 1
     return updated
 

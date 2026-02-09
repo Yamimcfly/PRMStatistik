@@ -5,6 +5,9 @@ import pandas as pd
 
 from app.importers.wch_mapping import map_wch_category
 from app.importers.destination_mapping import map_destination
+from app.importers.airline_mapping import map_airline
+from app.importers.flight_destination_mapping import map_flight_destination
+from app.importers.flight_number_fix import apply_flight_number_fix
 
 from app.db.models import ImportFile, PrmAnnouncement
 
@@ -154,12 +157,33 @@ def import_voranmeldungen(path: str, session) -> int:
 
     rows = []
     for _, row in df.iterrows():
+        airline_raw = safe_str(row.get("airline_code"), 255)
+        airline_code = map_airline(airline_raw, session)
+        flight_no = safe_str(row.get("flight_no"), 20)
+        corrected_airline, corrected_flight_no = apply_flight_number_fix(
+            airline_code or airline_raw,
+            flight_no,
+            session,
+        )
+        if corrected_airline:
+            airline_code = map_airline(corrected_airline, session) or corrected_airline
+        if corrected_flight_no:
+            flight_no = corrected_flight_no
+        airport_code = map_destination(row.get("airport"), session)
+        if not airport_code:
+            airport_code = map_flight_destination(
+                airline_code or airline_raw,
+                flight_no,
+                session,
+            )
+
         rows.append(
             PrmAnnouncement(
                 import_id=import_file.id,
-                airline_code=safe_str(row.get("airline_code"), 5),
+                airline_code=airline_code,
+                airline_raw=airline_raw,
                 handling_company=safe_str(row.get("handling_company"), 255),
-                flight_no=safe_str(row.get("flight_no"), 20),
+                flight_no=flight_no,
                 flight_date=to_none(row.get("flight_date")),
                 flight_time=safe_str(row.get("flight_time"), 10),
                 report_date=to_none(row.get("report_date")),
@@ -167,7 +191,7 @@ def import_voranmeldungen(path: str, session) -> int:
                 lead_hours=to_none(row.get("lead_hours")),
                 lead_bucket=safe_str(row.get("lead_bucket"), 20),
                 airport=safe_str(row.get("airport"), 80),
-                airport_code=map_destination(row.get("airport"), session),
+                airport_code=airport_code,
                 wch_type=safe_str(row.get("wch_type"), 10),
                 wch_category=map_wch_category(row.get("wch_type"), session),
                 late_report=bool(row.get("late_report")) if not pd.isna(row.get("late_report")) else False,

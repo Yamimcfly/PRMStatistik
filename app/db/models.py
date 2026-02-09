@@ -45,11 +45,20 @@ class RefAirline(Base):
     mapping = Column(String(50), nullable=True)
 
 
+class RefAirlineMap(Base):
+    __tablename__ = "ref_airline_map"
+    raw_value = Column(String(100), primary_key=True)
+    iata2 = Column(String(2), nullable=True)
+    display_name = Column(String(255), nullable=True)
+    mapping_source = Column(String(20), nullable=True)
+
+
 class RefWchType(Base):
     __tablename__ = "ref_wch_type"
     raw_value = Column(String(50), primary_key=True)
     category_code = Column(String(10), nullable=True)
     category_name = Column(String(20), nullable=True)
+    mapping_source = Column(String(20), nullable=True)
 
 
 class RefDestination(Base):
@@ -57,6 +66,25 @@ class RefDestination(Base):
     raw_value = Column(String(100), primary_key=True)
     iata3 = Column(String(3), nullable=True)
     display_name = Column(String(255), nullable=True)
+    mapping_source = Column(String(20), nullable=True)
+
+
+class RefFlightDestination(Base):
+    __tablename__ = "ref_flight_destination"
+    airline_key = Column(String(10), primary_key=True)
+    flight_no_key = Column(String(20), primary_key=True)
+    destination_iata3 = Column(String(3), nullable=True)
+    display_name = Column(String(255), nullable=True)
+    mapping_source = Column(String(20), nullable=True)
+
+
+class RefFlightNumberFix(Base):
+    __tablename__ = "ref_flight_number_fix"
+    airline_key = Column(String(10), primary_key=True)
+    flight_no_key = Column(String(20), primary_key=True)
+    corrected_airline = Column(String(10), nullable=True)
+    corrected_flight_no = Column(String(20), nullable=True)
+    mapping_source = Column(String(20), nullable=True)
 
 
 class PrmAnnouncement(Base):
@@ -66,6 +94,7 @@ class PrmAnnouncement(Base):
     import_file = relationship("ImportFile")
 
     airline_code = Column(String(5), nullable=True)
+    airline_raw = Column(String(255), nullable=True)
     handling_company = Column(String(255), nullable=True)
     flight_no = Column(String(20), nullable=True)
     flight_date = Column(Date, nullable=True)
