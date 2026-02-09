@@ -1,0 +1,24 @@
+Git-Setup fuer den zweiten Rechner
+
+1) Repository klonen
+   git clone https://github.com/Yamimcfly/PRMStatistik.git
+   cd PRMStatistik
+
+2) Virtuelle Umgebung erstellen und aktivieren
+   python -m venv .venv
+   .\.venv\Scripts\activate
+
+3) Abhaengigkeiten installieren
+   pip install -r requirements.txt
+
+4) config.json anlegen/prüfen
+   - config.example.json nach config.json kopieren
+   - Datenbank-URL und Pfade zu Mapping-Dateien anpassen
+
+5) App starten
+   python -m app
+
+Hinweis:
+- Wenn PostgreSQL verwendet wird, muss der Server auf dem zweiten Rechner laufen
+  und die Datenbank erreichbar sein.
+- Alternativ kann die DB-URL in config.json auf SQLite umgestellt werden.
