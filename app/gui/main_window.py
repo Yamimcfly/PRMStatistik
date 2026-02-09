@@ -37,8 +37,14 @@ from app.services.statistics import (
     compute_quarterly_destination_stats,
     compute_quarterly_airline_stats,
     compute_monthly_summary_stats,
+    compute_daily_stats,
     get_filter_options,
     fetch_import_history,
+)
+from app.services.excel_export import (
+    export_with_formatting,
+    format_destination_stats,
+    format_airline_stats,
 )
 from app.importers.wch_mapping import load_wch_mapping, map_wch_category, CATEGORY_MAP
 from app.importers.destination_mapping import (
@@ -91,12 +97,15 @@ class MainWindow(QMainWindow):
         btn_export.clicked.connect(self.export_current_tab)
         btn_export_super = QPushButton("Super Export…")
         btn_export_super.clicked.connect(self.export_super)
+        btn_export_daily = QPushButton("Export Tägliche Statistik…")
+        btn_export_daily.clicked.connect(self.export_daily_stats)
         row.addWidget(self.lbl)
         row.addStretch(1)
         row.addWidget(btn_pick)
         row.addWidget(btn_refresh)
         row.addWidget(btn_export)
         row.addWidget(btn_export_super)
+        row.addWidget(btn_export_daily)
         layout.addLayout(row)
 
         row_actions = QHBoxLayout()
@@ -108,12 +117,15 @@ class MainWindow(QMainWindow):
         btn_airline.clicked.connect(self.edit_airline_mapping)
         btn_flight = QPushButton("Flugnummer Mapping bearbeiten…")
         btn_flight.clicked.connect(self.edit_flight_mapping)
+        btn_import_flights = QPushButton("Flugplandaten importieren…")
+        btn_import_flights.clicked.connect(self.import_flight_schedules)
         btn_delete_import = QPushButton("Import loeschen")
         btn_delete_import.clicked.connect(self.delete_selected_import)
         row_actions.addWidget(btn_wch)
         row_actions.addWidget(btn_dest)
         row_actions.addWidget(btn_airline)
         row_actions.addWidget(btn_flight)
+        row_actions.addWidget(btn_import_flights)
         row_actions.addWidget(btn_delete_import)
         row_actions.addStretch(1)
         layout.addLayout(row_actions)
@@ -160,9 +172,11 @@ class MainWindow(QMainWindow):
 
         self.tab_dest = QTableWidget()
         self.tab_airline = QTableWidget()
+        self.tab_daily = QTableWidget()
         self.tab_history = QTableWidget()
         self.tabs.addTab(self.tab_dest, "Destinationen + WCH")
         self.tabs.addTab(self.tab_airline, "Airlines + WCH")
+        self.tabs.addTab(self.tab_daily, "Tägliche Statistik")
         self.tabs.addTab(self.tab_history, "Import-Historie")
 
         self.last_data = {}
@@ -224,13 +238,16 @@ class MainWindow(QMainWindow):
 
             dest = compute_destination_stats(session, month, in_out, airline, wch_type)
             airline_df = compute_airline_stats(session, month, in_out, airline, wch_type)
+            daily_df = compute_daily_stats(session, month, in_out, airline, wch_type)
             history_df = fetch_import_history(session)
             self.show_df(self.tab_dest, dest)
             self.show_df(self.tab_airline, airline_df)
+            self.show_df(self.tab_daily, daily_df)
             self.show_df(self.tab_history, history_df)
             self.last_data = {
                 "Destinationen + WCH": dest,
                 "Airlines + WCH": airline_df,
+                "Tägliche Statistik": daily_df,
                 "Import-Historie": history_df,
             }
         finally:
@@ -269,7 +286,18 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            df.to_excel(path, index=False)
+            # Formatiere Daten je nach Tab
+            if "Destination" in tab_name:
+                df = format_destination_stats(df)
+            elif "Airline" in tab_name:
+                df = format_airline_stats(df)
+            
+            # Export mit Formatierung
+            with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                export_with_formatting(writer, df, "Daten", 
+                                     title=f"PRM Statistik - {tab_name}")
+            
+            QMessageBox.information(self, "Erfolg", f"Export erfolgreich:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", str(e))
 
@@ -289,20 +317,121 @@ class MainWindow(QMainWindow):
             airline = self._current_value(self.cmb_airline)
             wch_type = self._current_value(self.cmb_wch)
 
-            dest_month = compute_monthly_destination_stats(session, in_out, airline, wch_type)
-            airline_month = compute_monthly_airline_stats(session, in_out, airline, wch_type)
-            dest_quarter = compute_quarterly_destination_stats(session, in_out, airline, wch_type)
-            airline_quarter = compute_quarterly_airline_stats(session, in_out, airline, wch_type)
+            dest_month = format_destination_stats(compute_monthly_destination_stats(session, in_out, airline, wch_type))
+            airline_month = format_airline_stats(compute_monthly_airline_stats(session, in_out, airline, wch_type))
+            dest_quarter = format_destination_stats(compute_quarterly_destination_stats(session, in_out, airline, wch_type))
+            airline_quarter = format_airline_stats(compute_quarterly_airline_stats(session, in_out, airline, wch_type))
             summary_month = compute_monthly_summary_stats(session, in_out, airline, wch_type)
             history_df = fetch_import_history(session)
 
+            # Monatsnamen-Mapping
+            month_names = {
+                "01": "Januar", "02": "Februar", "03": "März", "04": "April",
+                "05": "Mai", "06": "Juni", "07": "Juli", "08": "August",
+                "09": "September", "10": "Oktober", "11": "November", "12": "Dezember"
+            }
+
+            # Bestimme Datumsbereich
+            date_range = "Alle Monate"
+            if not history_df.empty and 'month_key' in history_df.columns:
+                months = sorted(history_df['month_key'].dropna().unique())
+                if months:
+                    date_range = f"{months[0]} - {months[-1]}"
+
             with pd.ExcelWriter(path, engine="openpyxl") as writer:
-                dest_month.to_excel(writer, sheet_name="Monat_Destination", index=False)
-                airline_month.to_excel(writer, sheet_name="Monat_Airline", index=False)
-                summary_month.to_excel(writer, sheet_name="Monat_Gesamt", index=False)
-                dest_quarter.to_excel(writer, sheet_name="Quartal_Destination", index=False)
-                airline_quarter.to_excel(writer, sheet_name="Quartal_Airline", index=False)
-                history_df.to_excel(writer, sheet_name="Check_Import", index=False)
+                # Destination Sheets nach Monat
+                if not dest_month.empty and 'Month' in dest_month.columns:
+                    for month_key in sorted(dest_month['Month'].unique()):
+                        month_df = dest_month[dest_month['Month'] == month_key].drop(columns=['Month'])
+                        # Extrahiere Monatsnamen aus YYYY-MM Format
+                        try:
+                            month_num = month_key.split('-')[1]
+                            month_name = month_names.get(month_num, month_key)
+                        except:
+                            month_name = month_key
+                        
+                        sheet_name = f"{month_name}_Destination"[:31]  # Excel limit
+                        export_with_formatting(writer, month_df, sheet_name,
+                                             title=f"PRM Statistik - Destination ({month_name})",
+                                             date_range=month_key)
+                
+                # Airline Sheets nach Monat
+                if not airline_month.empty and 'Month' in airline_month.columns:
+                    for month_key in sorted(airline_month['Month'].unique()):
+                        month_df = airline_month[airline_month['Month'] == month_key].drop(columns=['Month'])
+                        try:
+                            month_num = month_key.split('-')[1]
+                            month_name = month_names.get(month_num, month_key)
+                        except:
+                            month_name = month_key
+                        
+                        sheet_name = f"{month_name}_Airline"[:31]
+                        export_with_formatting(writer, month_df, sheet_name,
+                                             title=f"PRM Statistik - Airline ({month_name})",
+                                             date_range=month_key)
+                
+                # Zusätzliche Sheets
+                if not summary_month.empty:
+                    export_with_formatting(writer, summary_month, "Gesamt",
+                                         title="PRM Statistik - Gesamt", date_range=date_range)
+                if not dest_quarter.empty:
+                    export_with_formatting(writer, dest_quarter, "Quartal_Destination",
+                                         title="PRM Statistik - Destination (Quartal)", date_range=date_range)
+                if not airline_quarter.empty:
+                    export_with_formatting(writer, airline_quarter, "Quartal_Airline",
+                                         title="PRM Statistik - Airline (Quartal)", date_range=date_range)
+                if not history_df.empty:
+                    history_df.to_excel(writer, sheet_name="Check_Import", index=False)
+            
+            QMessageBox.information(self, "Erfolg", f"Export erfolgreich:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", str(e))
+        finally:
+            session.close()
+
+    def export_daily_stats(self):
+        """Exportiert tägliche Statistiken für den ausgewählten Monat"""
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Tägliche Statistik",
+            str(EXPORT_DIR),
+            "Excel (*.xlsx)",
+        )
+        if not path:
+            return
+
+        session = SessionLocal()
+        try:
+            month = self._current_value(self.cmb_month)
+            in_out = self._current_value(self.cmb_inout)
+            airline = self._current_value(self.cmb_airline)
+            wch_type = self._current_value(self.cmb_wch)
+
+            daily_df = compute_daily_stats(session, month, in_out, airline, wch_type)
+            
+            if daily_df.empty:
+                QMessageBox.information(self, "Hinweis", "Keine Daten für den ausgewählten Monat.")
+                return
+
+            # Monatsnamen extrahieren
+            month_name = month if month else "Alle_Monate"
+            try:
+                month_num = month.split('-')[1]
+                month_names_map = {
+                    "01": "Januar", "02": "Februar", "03": "März", "04": "April",
+                    "05": "Mai", "06": "Juni", "07": "Juli", "08": "August",
+                    "09": "September", "10": "Oktober", "11": "November", "12": "Dezember"
+                }
+                month_name = month_names_map.get(month_num, month)
+            except:
+                pass
+
+            with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                export_with_formatting(writer, daily_df, "Tägliche_Statistik",
+                                     title=f"PRM Statistik - Tägliche Übersicht ({month_name})",
+                                     date_range=month)
+            
+            QMessageBox.information(self, "Erfolg", f"Export erfolgreich:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", str(e))
         finally:
@@ -331,6 +460,132 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self.refresh_filters()
         self.refresh_stats()
+
+    def import_flight_schedules(self):
+        from pathlib import Path
+        import pandas as pd
+        import re
+        from app.db.models import RefFlightDestination
+        from app.importers.airline_mapping import normalize_airline_key
+        from app.importers.flight_destination_mapping import normalize_flight_no
+        
+        # Pfad zum Flugplan-Verzeichnis
+        schedule_dir = Path(r"C:\Users\DRKairport\OneDrive - Deutsches Rotes Kreuz - Kreisverband Köln e.V\Desktop\Persönliche Ordner\Bauschke\Statistik\2025\Destination")
+        
+        if not schedule_dir.exists():
+            QMessageBox.warning(
+                self,
+                "Ordner nicht gefunden",
+                f"Der Flugplan-Ordner wurde nicht gefunden:\n{schedule_dir}"
+            )
+            return
+        
+        excel_files = list(schedule_dir.glob("*.xlsx"))
+        if not excel_files:
+            QMessageBox.warning(
+                self,
+                "Keine Dateien",
+                f"Keine Excel-Dateien gefunden in:\n{schedule_dir}"
+            )
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Flugplandaten importieren",
+            f"Es wurden {len(excel_files)} Flugplan-Dateien gefunden.\n\nMöchten Sie diese importieren?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        try:
+            all_mappings = {}
+            
+            for file_path in excel_files:
+                df = pd.read_excel(file_path, sheet_name=0)
+                
+                # Überspringe Header-Zeile
+                if len(df) > 0 and pd.isna(df.iloc[0]['FlugNr']):
+                    df = df.iloc[1:]
+                
+                for _, row in df.iterrows():
+                    # Extrahiere Airline und Flugnummer
+                    flight_nr_str = row.get('FlugNr')
+                    if pd.isna(flight_nr_str):
+                        continue
+                    
+                    text = str(flight_nr_str).strip()
+                    match = re.match(r'([A-Z0-9]{2})\s*(\d+)', text)
+                    if not match:
+                        continue
+                    
+                    airline_code = match.group(1)
+                    flight_no = match.group(2)
+                    
+                    # Extrahiere Destination
+                    dest_str = row.get('ORG    DES')
+                    if pd.isna(dest_str):
+                        continue
+                    
+                    dest_text = str(dest_str).strip().upper()
+                    dest_match = re.match(r'^([A-Z]{3})', dest_text)
+                    if not dest_match:
+                        continue
+                    
+                    destination = dest_match.group(1)
+                    
+                    # Normalisiere
+                    airline_key = normalize_airline_key(airline_code)
+                    flight_key = normalize_flight_no(flight_no)
+                    
+                    if airline_key and flight_key:
+                        all_mappings[(airline_key, flight_key)] = destination
+            
+            # Importiere in Datenbank
+            session = SessionLocal()
+            try:
+                imported = 0
+                updated = 0
+                
+                for (airline_key, flight_key), destination in all_mappings.items():
+                    existing = session.get(RefFlightDestination, (airline_key, flight_key))
+                    
+                    if existing:
+                        if existing.destination_iata3 != destination:
+                            existing.destination_iata3 = destination
+                            existing.mapping_source = "flugplan"
+                            updated += 1
+                    else:
+                        session.merge(RefFlightDestination(
+                            airline_key=airline_key,
+                            flight_no_key=flight_key,
+                            destination_iata3=destination,
+                            mapping_source="flugplan"
+                        ))
+                        imported += 1
+                
+                session.commit()
+                
+                QMessageBox.information(
+                    self,
+                    "Import erfolgreich",
+                    f"Flugplandaten wurden importiert:\n\n"
+                    f"• {imported} neue Mappings\n"
+                    f"• {updated} aktualisierte Mappings\n"
+                    f"• Gesamt: {len(all_mappings)} Flugnummern"
+                )
+                
+                self.refresh_stats()
+                
+            except Exception as e:
+                session.rollback()
+                QMessageBox.critical(self, "Fehler", f"Datenbankfehler: {e}")
+            finally:
+                session.close()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Import fehlgeschlagen: {e}")
 
     def delete_selected_import(self):
         if self.tabs.currentWidget() is not self.tab_history:
@@ -1126,6 +1381,15 @@ class AirlineMappingDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # Suchzeile
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Suche:"))
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Airline-Code oder Name eingeben...")
+        self.search_input.textChanged.connect(self.filter_tables)
+        search_layout.addWidget(self.search_input)
+        layout.addLayout(search_layout)
+
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
@@ -1159,25 +1423,19 @@ class AirlineMappingDialog(QDialog):
         row = QHBoxLayout()
         btn_add = QPushButton("Zeile hinzufuegen")
         btn_add.clicked.connect(self.add_row)
-        btn_add_fix = QPushButton("Korrektur hinzufuegen")
-        btn_add_fix.clicked.connect(self.add_fix_row)
         btn_refresh = QPushButton("Aktualisieren")
         btn_refresh.clicked.connect(self.load_data)
         btn_save_unmapped = QPushButton("Nicht zugeordnete uebernehmen")
         btn_save_unmapped.clicked.connect(self.save_unmapped)
         btn_save = QPushButton("Speichern")
         btn_save.clicked.connect(self.save_mapping)
-        btn_save_fix = QPushButton("Korrekturen speichern")
-        btn_save_fix.clicked.connect(self.save_fixes)
         btn_close = QPushButton("Schliessen")
         btn_close.clicked.connect(self.close)
         row.addWidget(btn_add)
-        row.addWidget(btn_add_fix)
         row.addWidget(btn_refresh)
         row.addStretch(1)
         row.addWidget(btn_save_unmapped)
         row.addWidget(btn_save)
-        row.addWidget(btn_save_fix)
         row.addWidget(btn_close)
         layout.addLayout(row)
 
@@ -1189,15 +1447,6 @@ class AirlineMappingDialog(QDialog):
         self.tbl_mapping.setItem(r, 0, self._editable_item(""))
         self.tbl_mapping.setItem(r, 1, self._editable_item(""))
         self.tbl_mapping.setItem(r, 2, self._editable_item(""))
-
-    def add_fix_row(self):
-        r = self.tbl_fix.rowCount()
-        self.tbl_fix.insertRow(r)
-        self.tbl_fix.setItem(r, 0, self._editable_item(""))
-        self.tbl_fix.setItem(r, 1, self._editable_item(""))
-        self.tbl_fix.setItem(r, 2, self._editable_item(""))
-        self.tbl_fix.setItem(r, 3, self._editable_item(""))
-        self.tbl_fix.setCellWidget(r, 4, self._source_combo("manual"))
 
     def load_data(self):
         session = SessionLocal()
@@ -1227,6 +1476,30 @@ class AirlineMappingDialog(QDialog):
                 self.tbl_unmapped.setItem(i, 1, self._editable_item(""))
         finally:
             session.close()
+
+    def filter_tables(self):
+        search_text = self.search_input.text().lower().strip()
+        
+        # Filtere tbl_mapping
+        for row in range(self.tbl_mapping.rowCount()):
+            raw = self._cell_text(self.tbl_mapping, row, 0).lower()
+            iata2 = self._cell_text(self.tbl_mapping, row, 1).lower()
+            airline = self._cell_text(self.tbl_mapping, row, 2).lower()
+            
+            if not search_text or search_text in raw or search_text in iata2 or search_text in airline:
+                self.tbl_mapping.setRowHidden(row, False)
+            else:
+                self.tbl_mapping.setRowHidden(row, True)
+        
+        # Filtere tbl_unmapped
+        for row in range(self.tbl_unmapped.rowCount()):
+            val = self._cell_text(self.tbl_unmapped, row, 0).lower()
+            iata2 = self._cell_text(self.tbl_unmapped, row, 1).lower()
+            
+            if not search_text or search_text in val or search_text in iata2:
+                self.tbl_unmapped.setRowHidden(row, False)
+            else:
+                self.tbl_unmapped.setRowHidden(row, True)
 
     def save_mapping(self):
         data = []
@@ -1423,6 +1696,15 @@ class FlightDestinationMappingDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # Suchzeile
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Suche:"))
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Airline oder Flugnummer eingeben...")
+        self.search_input.textChanged.connect(self.filter_tables)
+        search_layout.addWidget(self.search_input)
+        layout.addLayout(search_layout)
+
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
@@ -1434,6 +1716,7 @@ class FlightDestinationMappingDialog(QDialog):
         self.tbl_mapping.setHorizontalHeaderLabels(["Airline", "FlightNo", "Destination (IATA3)", "Quelle"])
         self.tbl_mapping.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl_mapping.setEditTriggers(QAbstractItemView.AllEditTriggers)
+        self.tbl_mapping.setSortingEnabled(True)
         mapped_layout.addWidget(self.tbl_mapping)
         self.tabs.addTab(mapped_tab, "Alle Zuordnungen")
 
@@ -1448,6 +1731,7 @@ class FlightDestinationMappingDialog(QDialog):
         self.tbl_unmapped.setHorizontalHeaderLabels(["Airline", "FlightNo", "Destination (IATA3)"])
         self.tbl_unmapped.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl_unmapped.setEditTriggers(QAbstractItemView.AllEditTriggers)
+        self.tbl_unmapped.setSortingEnabled(True)
         unmapped_layout.addWidget(self.tbl_unmapped)
         self.tabs.addTab(unmapped_tab, "Nicht zugeordnet")
 
@@ -1466,6 +1750,7 @@ class FlightDestinationMappingDialog(QDialog):
             "Korr. FlightNo",
             "Quelle",
         ])
+        self.tbl_fix.setSortingEnabled(True)
         self.tbl_fix.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl_fix.setEditTriggers(QAbstractItemView.AllEditTriggers)
         fix_layout.addWidget(self.tbl_fix)
@@ -1476,6 +1761,8 @@ class FlightDestinationMappingDialog(QDialog):
         btn_add.clicked.connect(self.add_row)
         btn_add_fix = QPushButton("Korrektur hinzufuegen")
         btn_add_fix.clicked.connect(self.add_fix_row)
+        btn_delete_fix = QPushButton("Korrektur loeschen")
+        btn_delete_fix.clicked.connect(self.delete_fix_row)
         btn_refresh = QPushButton("Aktualisieren")
         btn_refresh.clicked.connect(self.load_data)
         btn_save_unmapped = QPushButton("Nicht zugeordnete uebernehmen")
@@ -1488,6 +1775,7 @@ class FlightDestinationMappingDialog(QDialog):
         btn_close.clicked.connect(self.close)
         row.addWidget(btn_add)
         row.addWidget(btn_add_fix)
+        row.addWidget(btn_delete_fix)
         row.addWidget(btn_refresh)
         row.addStretch(1)
         row.addWidget(btn_save_unmapped)
@@ -1514,9 +1802,66 @@ class FlightDestinationMappingDialog(QDialog):
         self.tbl_fix.setItem(r, 3, self._editable_item(""))
         self.tbl_fix.setCellWidget(r, 4, self._source_combo("manual"))
 
+    def delete_fix_row(self):
+        if self.tabs.currentWidget() != self.tabs.widget(2):  # Korrekturen Tab
+            QMessageBox.information(self, "Hinweis", "Bitte zum Tab 'Korrekturen' wechseln.")
+            return
+        
+        row = self.tbl_fix.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Hinweis", "Bitte eine Zeile in der Korrektur-Tabelle auswaehlen.")
+            return
+        
+        # Lese die BEREITS NORMALISIERTEN Werte direkt aus der Tabelle
+        airline_key = self._cell_text(self.tbl_fix, row, 0)  # Schon normalisiert!
+        flight_key = self._cell_text(self.tbl_fix, row, 1)   # Schon normalisiert!
+        # Leerer String = Wildcard (nicht *)
+        
+        reply = QMessageBox.question(
+            self,
+            "Korrektur loeschen",
+            f"Korrektur fuer {airline_key} {flight_key if flight_key else '(alle)'} loeschen?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.No:
+            return
+        
+        if airline_key:
+            session = SessionLocal()
+            try:
+                fix = session.get(RefFlightNumberFix, (airline_key, flight_key))
+                if fix:
+                    session.delete(fix)
+                    session.commit()
+                    QMessageBox.information(self, "OK", "Korrektur geloescht.")
+                    self.load_data()
+                else:
+                    # Debug: Zeige was gesucht wurde
+                    all_fixes = session.query(RefFlightNumberFix).all()
+                    keys = [(f.airline_key, f.flight_no_key) for f in all_fixes]
+                    QMessageBox.warning(
+                        self, 
+                        "Hinweis", 
+                        f"Korrektur ({airline_key}, {flight_key}) nicht gefunden.\n"
+                        f"Vorhandene Keys: {keys}"
+                    )
+            except Exception as e:
+                session.rollback()
+                QMessageBox.critical(self, "Fehler", str(e))
+            finally:
+                session.close()
+        else:
+            self.tbl_fix.removeRow(row)
+
     def load_data(self):
         session = SessionLocal()
         try:
+            # Sortierung beim Laden deaktivieren für bessere Performance
+            self.tbl_mapping.setSortingEnabled(False)
+            self.tbl_unmapped.setSortingEnabled(False)
+            self.tbl_fix.setSortingEnabled(False)
+            
             rows = session.query(RefFlightDestination).order_by(
                 RefFlightDestination.airline_key,
                 RefFlightDestination.flight_no_key,
@@ -1565,8 +1910,49 @@ class FlightDestinationMappingDialog(QDialog):
                 self.tbl_fix.setItem(i, 3, self._editable_item(row.corrected_flight_no or ""))
                 source = row.mapping_source or "auto"
                 self.tbl_fix.setCellWidget(i, 4, self._source_combo(source))
+            
+            # Sortierung wieder aktivieren
+            self.tbl_mapping.setSortingEnabled(True)
+            self.tbl_unmapped.setSortingEnabled(True)
+            self.tbl_fix.setSortingEnabled(True)
         finally:
             session.close()
+
+    def filter_tables(self):
+        search_text = self.search_input.text().lower().strip()
+        
+        # Filtere tbl_mapping
+        for row in range(self.tbl_mapping.rowCount()):
+            airline = self._cell_text(self.tbl_mapping, row, 0).lower()
+            flight_no = self._cell_text(self.tbl_mapping, row, 1).lower()
+            dest = self._cell_text(self.tbl_mapping, row, 2).lower()
+            
+            if not search_text or search_text in airline or search_text in flight_no or search_text in dest:
+                self.tbl_mapping.setRowHidden(row, False)
+            else:
+                self.tbl_mapping.setRowHidden(row, True)
+        
+        # Filtere tbl_unmapped
+        for row in range(self.tbl_unmapped.rowCount()):
+            airline = self._cell_text(self.tbl_unmapped, row, 0).lower()
+            flight_no = self._cell_text(self.tbl_unmapped, row, 1).lower()
+            
+            if not search_text or search_text in airline or search_text in flight_no:
+                self.tbl_unmapped.setRowHidden(row, False)
+            else:
+                self.tbl_unmapped.setRowHidden(row, True)
+        
+        # Filtere tbl_fix
+        for row in range(self.tbl_fix.rowCount()):
+            airline = self._cell_text(self.tbl_fix, row, 0).lower()
+            flight_no = self._cell_text(self.tbl_fix, row, 1).lower()
+            corr_airline = self._cell_text(self.tbl_fix, row, 2).lower()
+            corr_flight = self._cell_text(self.tbl_fix, row, 3).lower()
+            
+            if not search_text or search_text in airline or search_text in flight_no or search_text in corr_airline or search_text in corr_flight:
+                self.tbl_fix.setRowHidden(row, False)
+            else:
+                self.tbl_fix.setRowHidden(row, True)
 
     def save_mapping(self):
         data = []
@@ -1729,8 +2115,8 @@ class FlightDestinationMappingDialog(QDialog):
             source = self._source_value(self.tbl_fix, r, 4)
             if not airline_val and not flight_no and not corr_airline and not corr_flight:
                 continue
-            if not airline_val or not flight_no:
-                QMessageBox.critical(self, "Fehler", f"Wert fehlt in Zeile {r+1}.")
+            if not airline_val:
+                QMessageBox.critical(self, "Fehler", f"Airline fehlt in Zeile {r+1}.")
                 return
             if not corr_airline and not corr_flight:
                 QMessageBox.critical(
@@ -1740,9 +2126,9 @@ class FlightDestinationMappingDialog(QDialog):
                 )
                 return
             airline_key = normalize_airline_key(airline_val)
-            flight_key = normalize_flight_no(flight_no)
-            if not airline_key or not flight_key:
-                QMessageBox.critical(self, "Fehler", f"Ungueltige Werte in Zeile {r+1}.")
+            flight_key = normalize_flight_no(flight_no) if flight_no else ""
+            if not airline_key:
+                QMessageBox.critical(self, "Fehler", f"Ungueltige Airline in Zeile {r+1}.")
                 return
             data.append((airline_key, flight_key, corr_airline, corr_flight, source))
 
@@ -1752,6 +2138,7 @@ class FlightDestinationMappingDialog(QDialog):
 
         session = SessionLocal()
         try:
+            # Sammle alle vorhandenen Airline/Flight Kombinationen
             values = session.query(
                 PrmAnnouncement.airline_raw,
                 PrmAnnouncement.airline_code,
@@ -1759,6 +2146,8 @@ class FlightDestinationMappingDialog(QDialog):
             ).filter(PrmAnnouncement.flight_no.isnot(None)).distinct().all()
 
             raw_pairs_by_key = {}
+            airline_raw_values = {}  # Map normalized key -> set of raw values
+            
             for raw_val, code_val, flight_no in values:
                 if not flight_no:
                     continue
@@ -1775,9 +2164,14 @@ class FlightDestinationMappingDialog(QDialog):
                     raw_pairs_by_key.setdefault((airline_key, flight_key), set()).add(
                         (raw_val, code_val, flight_no)
                     )
+                    # Sammle auch Raw-Werte für Wildcard-Suche
+                    airline_raw_values.setdefault(airline_key, set()).update(
+                        [v for v in [raw_val, code_val] if v]
+                    )
 
             session.query(RefFlightNumberFix).delete()
             for (airline_key, flight_key), (corr_airline, corr_flight, source) in unique_data.items():
+                # Speichere ALLE Korrekturen in die Tabelle (auch Wildcards)
                 session.merge(
                     RefFlightNumberFix(
                         airline_key=airline_key,
@@ -1788,26 +2182,59 @@ class FlightDestinationMappingDialog(QDialog):
                     )
                 )
 
-                pairs = raw_pairs_by_key.get((airline_key, flight_key), set())
-                for raw_val, code_val, raw_flight in pairs:
-                    filters = []
-                    if raw_val:
-                        filters.append(PrmAnnouncement.airline_raw == raw_val)
-                    if code_val:
-                        filters.append(PrmAnnouncement.airline_code == code_val)
-                    if not filters:
-                        continue
-                    updates = {}
-                    if corr_airline:
-                        updates[PrmAnnouncement.airline_code] = corr_airline
-                    if corr_flight:
-                        updates[PrmAnnouncement.flight_no] = corr_flight
-                    if not updates:
-                        continue
-                    session.query(PrmAnnouncement).filter(
-                        PrmAnnouncement.flight_no == raw_flight,
-                        or_(*filters),
-                    ).update(updates, synchronize_session=False)
+                # Wende Korrekturen auf Datenbank an
+                if flight_key == "":  # Leerer String = Wildcard
+                    # Wildcard: Alle Flugnummern dieser Airline korrigieren
+                    raw_values = airline_raw_values.get(airline_key, set())
+                    if raw_values:
+                        filters = []
+                        for raw_val in raw_values:
+                            filters.append(PrmAnnouncement.airline_code == raw_val)
+                            filters.append(PrmAnnouncement.airline_raw == raw_val)
+                        
+                        if filters:
+                            updates = {}
+                            if corr_airline:
+                                updates[PrmAnnouncement.airline_code] = corr_airline
+                            if corr_flight:
+                                updates[PrmAnnouncement.flight_no] = corr_flight
+                            if updates:
+                                count = session.query(PrmAnnouncement).filter(
+                                    or_(*filters)
+                                ).update(updates, synchronize_session=False)
+                                print(f"Wildcard update: {airline_key} -> {corr_airline}, {count} rows updated")
+                                
+                                # Auch RefFlightDestination aktualisieren
+                                dest_updates = {}
+                                if corr_airline:
+                                    dest_updates[RefFlightDestination.airline_key] = corr_airline
+                                if dest_updates:
+                                    dest_count = session.query(RefFlightDestination).filter(
+                                        RefFlightDestination.airline_key == airline_key
+                                    ).update(dest_updates, synchronize_session=False)
+                                    print(f"Wildcard destination update: {airline_key} -> {corr_airline}, {dest_count} mappings updated")
+                else:
+                    # Spezifische Flugnummer
+                    pairs = raw_pairs_by_key.get((airline_key, flight_key), set())
+                    for raw_val, code_val, raw_flight in pairs:
+                        filters = []
+                        if raw_val:
+                            filters.append(PrmAnnouncement.airline_raw == raw_val)
+                        if code_val:
+                            filters.append(PrmAnnouncement.airline_code == code_val)
+                        if not filters:
+                            continue
+                        updates = {}
+                        if corr_airline:
+                            updates[PrmAnnouncement.airline_code] = corr_airline
+                        if corr_flight:
+                            updates[PrmAnnouncement.flight_no] = corr_flight
+                        if not updates:
+                            continue
+                        session.query(PrmAnnouncement).filter(
+                            PrmAnnouncement.flight_no == raw_flight,
+                            or_(*filters),
+                        ).update(updates, synchronize_session=False)
 
             session.commit()
         except Exception as e:

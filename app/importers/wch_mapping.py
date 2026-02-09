@@ -14,9 +14,12 @@ CATEGORY_MAP = {
     "M": "MAAS",
     "ST": "STRETCHER",
     "STRETCHER": "STRETCHER",
+    "NO": "DPAX_NOSHOW",
+    "NOSHOW": "DPAX_NOSHOW",
+    "DPNA": "DPNA",
 }
 
-PRIORITY = ["WCHC", "WCHS", "WCHR", "STRETCHER", "MAAS", "BLIND", "TAUB"]
+PRIORITY = ["WCHC", "WCHS", "WCHR", "STRETCHER", "MAAS", "BLIND", "TAUB", "DPAX_NOSHOW", "DPNA"]
 
 
 def _normalize_token(value: str) -> str:
@@ -98,6 +101,10 @@ def map_wch_category(raw_value: Optional[str], session) -> Optional[str]:
         return "BLIND"
     if "DEAF" in raw or "TAUB" in raw:
         return "TAUB"
+    if "NOSHOW" in raw or "NO-SHOW" in raw or "DPAXNOSHOW" in raw or "NOSHO" in raw or "DPAXNOSHO" in raw:
+        return "DPAX_NOSHOW"
+    if "DPNA" in raw:
+        return "DPNA"
 
     tokens = [t.strip() for t in raw.split(",") if t.strip()]
     categories = []

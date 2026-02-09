@@ -16,27 +16,43 @@ SSR_MAP = {
     "DEAF": "T",
     "DEAFBLND": "T",
     "STCR": "ST",
+    "DPAX_NOSHOW": "NOSHOW",
+    "DPNA": "DPNA",
 }
 
-EXCLUDE_SSR = {"Dpax NoShow", "DPNA"}
+EXCLUDE_SSR = set()  # Dpax NoShow und DPNA werden jetzt mitgezählt
+
+def calculate_late_report_category(lead_hours, lead_bucket_str):
+    """
+    Berechnet Spätmeldungs-Kategorie:
+    - Spätmeldung (<36h): lead_hours < 36 ODER lead_bucket = 'adhoc'
+    - Keine Spätmeldung (>36h): lead_hours >= 36 ODER lead_bucket = 'planned'
+    """
+    # Priorität 1: lead_hours falls vorhanden
+    if lead_hours is not None:
+        return "<36h" if lead_hours < 36 else ">36h"
+    
+    # Priorität 2: lead_bucket String
+    if lead_bucket_str:
+        s = str(lead_bucket_str).strip().lower()
+        if "plan" in s:
+            return ">36h"
+        if "adhoc" in s or "ad-hoc" in s or "ad hoc" in s:
+            return "<36h"
+    
+    return None
 
 def lead_bucket(planned_adhoc: str | None):
-    if not planned_adhoc:
-        return None
-    s = planned_adhoc.strip().lower()
-    if "plan" in s:
-        return ">36h"
-    if "adhoc" in s or "ad-hoc" in s or "ad hoc" in s:
-        return "<36h"
-    return None
+    """Legacy Funktion für Kompatibilität - nutzt nur den String"""
+    return calculate_late_report_category(None, planned_adhoc)
 
 def compute_kap1_kap2_kap3(detail_df: pd.DataFrame):
     """Return (kap1, kap2, kap3_summary, kap3_detail). Expects normalized columns."""
     df = detail_df.copy()
     df["kap3_cat"] = df["ssr_code"].map(SSR_MAP)
     df = df[df["ssr_code"].notna() & ~df["ssr_code"].isin(EXCLUDE_SSR) & df["kap3_cat"].notna()].copy()
-    df["lead_bucket"] = df["planned_adhoc"].apply(lead_bucket)
-    cat_cols = ["R","S","C","M","B","T","ST"]
+    df["lead_bucket"] = df.apply(lambda row: calculate_late_report_category(row.get("lead_hours"), row.get("planned_adhoc")), axis=1)
+    cat_cols = ["R","S","C","M","B","T","ST","NOSHOW","DPNA"]
 
     # Kap1
     k1 = (df.pivot_table(index="airport_filled", columns="kap3_cat", values="request_id", aggfunc="count", fill_value=0)
@@ -99,12 +115,22 @@ def get_filter_options(session) -> dict:
 
 
 def compute_destination_stats(session, month_key=None, in_out=None, airline=None, wch_category=None) -> pd.DataFrame:
+    # SQL CASE-Ausdruck für Spätmeldungs-Kategorie
+    late_category = case(
+        (PrmAnnouncement.lead_hours < 36, "<36h"),
+        (PrmAnnouncement.lead_hours >= 36, ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%plan%"), ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%adhoc%"), "<36h"),
+        (PrmAnnouncement.lead_bucket.like("%ad-hoc%"), "<36h"),
+        else_=None
+    ).label("LeadBucket")
+    
     base = (
         session.query(
             PrmAnnouncement.airport_code.label("AirportCode"),
             PrmAnnouncement.airport.label("AirportRaw"),
             PrmAnnouncement.wch_category.label("WCH_Category"),
-            PrmAnnouncement.lead_bucket.label("LeadBucket"),
+            late_category,
         )
         .join(ImportFile, ImportFile.id == PrmAnnouncement.import_id, isouter=True)
         .filter(PrmAnnouncement.wch_category.isnot(None))
@@ -114,37 +140,45 @@ def compute_destination_stats(session, month_key=None, in_out=None, airline=None
     if df.empty:
         return df
 
-    df["Destination"] = df["AirportCode"].fillna(df["AirportRaw"])
+    df["Destination"] = df["AirportCode"].fillna(df["AirportRaw"]).fillna("OHNE ZIEL")
 
-    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER"]
+    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER", "DPAX_NOSHOW", "DPNA"]
     index_cols = ["Destination"]
 
     total_cat = df.groupby(index_cols + ["WCH_Category"]).size().unstack(fill_value=0)
-    adhoc_total = df[df["LeadBucket"] == "adhoc"].groupby(index_cols).size()
-    planned_total = df[df["LeadBucket"] == "planned"].groupby(index_cols).size()
+    late_total = df[df["LeadBucket"] == "<36h"].groupby(index_cols).size()
+    ontime_total = df[df["LeadBucket"] == ">36h"].groupby(index_cols).size()
 
     for cat in categories:
         if cat not in total_cat.columns:
             total_cat[cat] = 0
 
     total_cat = total_cat[categories]
-    on_time_total = (total_cat.sum(axis=1) - adhoc_total - planned_total).clip(lower=0)
 
     result = total_cat.add_prefix("Total_")
-    result["AdHoc"] = adhoc_total
-    result["Planned"] = planned_total
-    result["OnTime"] = on_time_total
+    result["<36h"] = late_total
+    result[">36h"] = ontime_total
     result["Gesamt_PRM"] = total_cat.sum(axis=1)
     result = result.reset_index()
     return result
 
 
 def compute_airline_stats(session, month_key=None, in_out=None, airline=None, wch_category=None) -> pd.DataFrame:
+    # SQL CASE-Ausdruck für Spätmeldungs-Kategorie
+    late_category = case(
+        (PrmAnnouncement.lead_hours < 36, "<36h"),
+        (PrmAnnouncement.lead_hours >= 36, ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%plan%"), ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%adhoc%"), "<36h"),
+        (PrmAnnouncement.lead_bucket.like("%ad-hoc%"), "<36h"),
+        else_=None
+    ).label("LeadBucket")
+    
     base = (
         session.query(
             PrmAnnouncement.airline_code.label("Airline"),
             PrmAnnouncement.wch_category.label("WCH_Category"),
-            PrmAnnouncement.lead_bucket.label("LeadBucket"),
+            late_category,
         )
         .join(ImportFile, ImportFile.id == PrmAnnouncement.import_id, isouter=True)
         .filter(PrmAnnouncement.wch_category.isnot(None))
@@ -154,24 +188,24 @@ def compute_airline_stats(session, month_key=None, in_out=None, airline=None, wc
     if df.empty:
         return df
 
-    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER"]
+    df["Airline"] = df["Airline"].fillna("OHNE AIRLINE")
+
+    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER", "DPAX_NOSHOW", "DPNA"]
     index_cols = ["Airline"]
 
     total_cat = df.groupby(index_cols + ["WCH_Category"]).size().unstack(fill_value=0)
-    adhoc_total = df[df["LeadBucket"] == "adhoc"].groupby(index_cols).size()
-    planned_total = df[df["LeadBucket"] == "planned"].groupby(index_cols).size()
+    late_total = df[df["LeadBucket"] == "<36h"].groupby(index_cols).size()
+    ontime_total = df[df["LeadBucket"] == ">36h"].groupby(index_cols).size()
 
     for cat in categories:
         if cat not in total_cat.columns:
             total_cat[cat] = 0
 
     total_cat = total_cat[categories]
-    on_time_total = (total_cat.sum(axis=1) - adhoc_total - planned_total).clip(lower=0)
 
     result = total_cat.add_prefix("Total_")
-    result["AdHoc"] = adhoc_total
-    result["Planned"] = planned_total
-    result["OnTime"] = on_time_total
+    result["<36h"] = late_total
+    result[">36h"] = ontime_total
     result["Gesamt_PRM"] = total_cat.sum(axis=1)
     result = result.reset_index()
     return result
@@ -190,6 +224,16 @@ def _quarter_from_month(month_key: str) -> str | None:
 
 
 def _monthly_base(session, in_out=None, airline=None, wch_category=None):
+    # SQL CASE-Ausdruck für Spätmeldungs-Kategorie
+    late_category = case(
+        (PrmAnnouncement.lead_hours < 36, "<36h"),
+        (PrmAnnouncement.lead_hours >= 36, ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%plan%"), ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%adhoc%"), "<36h"),
+        (PrmAnnouncement.lead_bucket.like("%ad-hoc%"), "<36h"),
+        else_=None
+    ).label("LeadBucket")
+    
     base = (
         session.query(
             ImportFile.month_key.label("Month"),
@@ -197,7 +241,7 @@ def _monthly_base(session, in_out=None, airline=None, wch_category=None):
             PrmAnnouncement.airport.label("AirportRaw"),
             PrmAnnouncement.airline_code.label("Airline"),
             PrmAnnouncement.wch_category.label("WCH_Category"),
-            PrmAnnouncement.late_report.label("LateReport"),
+            late_category,
         )
         .join(ImportFile, ImportFile.id == PrmAnnouncement.import_id, isouter=True)
         .filter(PrmAnnouncement.wch_category.isnot(None))
@@ -209,14 +253,14 @@ def compute_monthly_destination_stats(session, in_out=None, airline=None, wch_ca
     base = _monthly_base(session, in_out, airline, wch_category)
     df = pd.DataFrame(
         base.all(),
-        columns=["Month", "AirportCode", "AirportRaw", "Airline", "WCH_Category", "LateReport"],
+        columns=["Month", "AirportCode", "AirportRaw", "Airline", "WCH_Category", "LeadBucket"],
     )
     if df.empty:
         return df
 
-    df["Destination"] = df["AirportCode"].fillna(df["AirportRaw"])
+    df["Destination"] = df["AirportCode"].fillna(df["AirportRaw"]).fillna("OHNE ZIEL")
 
-    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER"]
+    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER", "DPAX_NOSHOW", "DPNA"]
     index_cols = ["Month", "Destination"]
 
     total_cat = df.groupby(index_cols + ["WCH_Category"]).size().unstack(fill_value=0)
@@ -225,10 +269,12 @@ def compute_monthly_destination_stats(session, in_out=None, airline=None, wch_ca
             total_cat[cat] = 0
 
     total_cat = total_cat[categories]
-    late_total = df[df["LateReport"] == True].groupby(index_cols).size()
+    late_total = df[df["LeadBucket"] == "<36h"].groupby(index_cols).size()
+    ontime_total = df[df["LeadBucket"] == ">36h"].groupby(index_cols).size()
 
     result = total_cat.add_prefix("Total_")
-    result["Spaetmeldungen"] = late_total
+    result["<36h"] = late_total
+    result[">36h"] = ontime_total
     result["Gesamt_PRM"] = total_cat.sum(axis=1)
     result = result.reset_index().sort_values(by=["Month", "Destination"])
     return result
@@ -238,12 +284,14 @@ def compute_monthly_airline_stats(session, in_out=None, airline=None, wch_catego
     base = _monthly_base(session, in_out, airline, wch_category)
     df = pd.DataFrame(
         base.all(),
-        columns=["Month", "AirportCode", "AirportRaw", "Airline", "WCH_Category", "LateReport"],
+        columns=["Month", "AirportCode", "AirportRaw", "Airline", "WCH_Category", "LeadBucket"],
     )
     if df.empty:
         return df
 
-    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER"]
+    df["Airline"] = df["Airline"].fillna("OHNE AIRLINE")
+
+    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER", "DPAX_NOSHOW", "DPNA"]
     index_cols = ["Month", "Airline"]
 
     total_cat = df.groupby(index_cols + ["WCH_Category"]).size().unstack(fill_value=0)
@@ -252,10 +300,12 @@ def compute_monthly_airline_stats(session, in_out=None, airline=None, wch_catego
             total_cat[cat] = 0
 
     total_cat = total_cat[categories]
-    late_total = df[df["LateReport"] == True].groupby(index_cols).size()
+    late_total = df[df["LeadBucket"] == "<36h"].groupby(index_cols).size()
+    ontime_total = df[df["LeadBucket"] == ">36h"].groupby(index_cols).size()
 
     result = total_cat.add_prefix("Total_")
-    result["Spaetmeldungen"] = late_total
+    result["<36h"] = late_total
+    result[">36h"] = ontime_total
     result["Gesamt_PRM"] = total_cat.sum(axis=1)
     result = result.reset_index().sort_values(by=["Month", "Airline"])
     return result
@@ -287,12 +337,12 @@ def compute_monthly_summary_stats(session, in_out=None, airline=None, wch_catego
     base = _monthly_base(session, in_out, airline, wch_category)
     df = pd.DataFrame(
         base.all(),
-        columns=["Month", "AirportCode", "AirportRaw", "Airline", "WCH_Category", "LateReport"],
+        columns=["Month", "AirportCode", "AirportRaw", "Airline", "WCH_Category", "LeadBucket"],
     )
     if df.empty:
         return df
 
-    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER"]
+    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER", "DPAX_NOSHOW", "DPNA"]
     index_cols = ["Month"]
 
     total_cat = df.groupby(index_cols + ["WCH_Category"]).size().unstack(fill_value=0)
@@ -301,16 +351,69 @@ def compute_monthly_summary_stats(session, in_out=None, airline=None, wch_catego
             total_cat[cat] = 0
 
     total_cat = total_cat[categories]
-    late_total = df[df["LateReport"] == True].groupby(index_cols).size()
+    late_total = df[df["LeadBucket"] == "<36h"].groupby(index_cols).size()
+    ontime_total = df[df["LeadBucket"] == ">36h"].groupby(index_cols).size()
 
     result = total_cat.add_prefix("Total_")
-    result["Spaetmeldungen"] = late_total
+    result["<36h"] = late_total
+    result[">36h"] = ontime_total
     result["Gesamt_WCH"] = total_cat.sum(axis=1)
-    result["Voranmeldungen"] = (result["Gesamt_WCH"] - result["Spaetmeldungen"]).clip(lower=0)
     result["Spaetmeldungen_Prozent"] = (
-        (result["Spaetmeldungen"] / result["Gesamt_WCH"]) * 100
+        (result["<36h"] / result["Gesamt_WCH"]) * 100
     ).fillna(0).round(2)
     result = result.reset_index().sort_values(by=["Month"])
+    return result
+
+
+def compute_daily_stats(session, month_key=None, in_out=None, airline=None, wch_category=None) -> pd.DataFrame:
+    """Tägliche Statistik für einen ausgewählten Monat"""
+    # SQL CASE-Ausdruck für Spätmeldungs-Kategorie
+    late_category = case(
+        (PrmAnnouncement.lead_hours < 36, "<36h"),
+        (PrmAnnouncement.lead_hours >= 36, ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%plan%"), ">36h"),
+        (PrmAnnouncement.lead_bucket.like("%adhoc%"), "<36h"),
+        (PrmAnnouncement.lead_bucket.like("%ad-hoc%"), "<36h"),
+        else_=None
+    ).label("LeadBucket")
+    
+    base = (
+        session.query(
+            PrmAnnouncement.flight_date.label("Datum"),
+            PrmAnnouncement.wch_category.label("WCH_Category"),
+            late_category,
+        )
+        .join(ImportFile, ImportFile.id == PrmAnnouncement.import_id, isouter=True)
+        .filter(PrmAnnouncement.wch_category.isnot(None))
+        .filter(PrmAnnouncement.flight_date.isnot(None))
+    )
+    base = _apply_filters(base, month_key, in_out, airline, wch_category)
+    
+    df = pd.DataFrame(base.all(), columns=["Datum", "WCH_Category", "LeadBucket"])
+    if df.empty:
+        return df
+
+    categories = ["WCHR", "WCHS", "WCHC", "BLIND", "TAUB", "MAAS", "STRETCHER", "DPAX_NOSHOW", "DPNA"]
+    index_cols = ["Datum"]
+
+    total_cat = df.groupby(index_cols + ["WCH_Category"]).size().unstack(fill_value=0)
+    for cat in categories:
+        if cat not in total_cat.columns:
+            total_cat[cat] = 0
+
+    total_cat = total_cat[categories]
+    late_total = df[df["LeadBucket"] == "<36h"].groupby(index_cols).size()
+    ontime_total = df[df["LeadBucket"] == ">36h"].groupby(index_cols).size()
+
+    result = total_cat.add_prefix("Total_")
+    result["<36h"] = late_total
+    result[">36h"] = ontime_total
+    result["Gesamt_PRM"] = total_cat.sum(axis=1)
+    result = result.reset_index().sort_values(by=["Datum"])
+    
+    # Formatiere Datum als String
+    result["Datum"] = pd.to_datetime(result["Datum"]).dt.strftime("%Y-%m-%d")
+    
     return result
 
 
