@@ -128,7 +128,6 @@ except DatabaseConnectionError as e:
 except Exception as e:
     # Unerwartete Fehler loggen, aber nicht abbrechen
     logger.warning(f"Fehler beim Initialisieren der Datenbank: {e}")
-SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, future=True)
 
 def init_db():
     # Import models so metadata is populated

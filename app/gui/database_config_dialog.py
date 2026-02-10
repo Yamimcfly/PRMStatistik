@@ -308,8 +308,6 @@ class DatabaseConfigDialog(QDialog):
     
     def _save_to_env_file(self, url):
         """Speichert die DATABASE_URL in die .env-Datei"""
-        from pathlib import Path
-        
         # Finde das Projekt-Root-Verzeichnis
         base_dir = Path(__file__).resolve().parents[2]
         env_file = base_dir / ".env"
