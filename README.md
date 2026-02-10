@@ -33,6 +33,18 @@ Wichtig sind insbesondere:
 
 ## Datenbank-Konfiguration
 
+Die Anwendung unterstützt sowohl SQLite für lokale Entwicklung als auch PostgreSQL (z.B. Neon) für Produktiv-Umgebungen.
+
+### Visueller Konfigurations-Dialog
+
+**Neu:** Wenn keine Datenbankverbindung hergestellt werden kann, zeigt die Anwendung automatisch einen visuellen Konfigurations-Dialog an, der Sie durch die Einrichtung führt.
+
+Der Dialog bietet:
+- Einfache Auswahl zwischen SQLite und PostgreSQL (Neon)
+- Automatische URL-Generierung mit Live-Vorschau
+- Verbindungstest vor dem Speichern
+- Automatisches Speichern der Konfiguration in `.env`
+
 ### Standard: SQLite (lokal)
 Die Anwendung verwendet standardmäßig SQLite für lokale Entwicklung:
 ```
@@ -100,8 +112,9 @@ python -m app
 
 Die Anwendung unterstützt auch andere PostgreSQL-Anbieter:
 - **Lokales PostgreSQL**: `postgresql://user:pass@localhost:5432/dbname`
-- **SQL Server**: `mssql+pyodbc://...` (via ODBC Driver 18)
 - **Andere Cloud-Anbieter**: Jeder PostgreSQL-kompatible Dienst
+
+**Hinweis**: SQL Server (`mssql+pyodbc://...`) wird ebenfalls unterstützt, erfordert jedoch andere Treiber (ODBC Driver 18) und ist nicht PostgreSQL-kompatibel.
 
 ## Migration SQLite -> PostgreSQL
 1) `config.json` auf PostgreSQL-Datenbank anpassen.

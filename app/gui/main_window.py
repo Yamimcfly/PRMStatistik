@@ -731,10 +731,82 @@ class MainWindow(QMainWindow):
             label.setStyleSheet("background:#f4cccc; padding:2px 6px; border-radius:4px;")
 
 def run_app():
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s: %(message)s'
+    )
+    
     app = QApplication(sys.argv)
-    w = MainWindow()
-    w.show()
-    sys.exit(app.exec())
+    
+    # Prüfe, ob die Datenbankverbindung initialisiert ist
+    from app.db.session import _engine, SessionLocal, initialize_database, DatabaseConnectionError
+    
+    if _engine is None or SessionLocal is None:
+        # Zeige Konfigurations-Dialog
+        from app.gui.database_config_dialog import DatabaseConfigDialog
+        
+        dialog = DatabaseConfigDialog(error_message=(
+            "Die Datenbankverbindung konnte nicht hergestellt werden.\n\n"
+            "Bitte konfigurieren Sie die Datenbankverbindung, um fortzufahren."
+        ))
+        
+        if dialog.exec() == QDialog.Accepted:
+            database_url = dialog.get_database_url()
+            if database_url:
+                try:
+                    # Initialisiere Datenbank mit der neuen URL
+                    # Setze Umgebungsvariable, damit andere Module die neue URL verwenden
+                    import os
+                    os.environ['DATABASE_URL'] = database_url
+                    
+                    # Re-initialisiere die Konfiguration
+                    import importlib
+                    import app.config
+                    importlib.reload(app.config)
+                    
+                    # Initialisiere Datenbank
+                    initialize_database(database_url)
+                    
+                    QMessageBox.information(
+                        None,
+                        "Verbindung erfolgreich",
+                        "Die Datenbankverbindung wurde erfolgreich hergestellt!"
+                    )
+                except DatabaseConnectionError as e:
+                    QMessageBox.critical(
+                        None,
+                        "Verbindungsfehler",
+                        f"Die Datenbankverbindung konnte nicht hergestellt werden:\n\n{e.message}"
+                    )
+                    return
+                except Exception as e:
+                    QMessageBox.critical(
+                        None,
+                        "Fehler",
+                        f"Ein Fehler ist aufgetreten:\n\n{str(e)}"
+                    )
+                    return
+            else:
+                return
+        else:
+            # Benutzer hat abgebrochen
+            return
+    
+    # Starte Hauptfenster
+    try:
+        w = MainWindow()
+        w.show()
+        sys.exit(app.exec())
+    except Exception as e:
+        QMessageBox.critical(
+            None,
+            "Fehler beim Starten",
+            f"Die Anwendung konnte nicht gestartet werden:\n\n{str(e)}"
+        )
+        import traceback
+        traceback.print_exc()
+
 
 
 class WchMappingDialog(QDialog):
