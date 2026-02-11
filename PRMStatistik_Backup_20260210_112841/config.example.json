@@ -1,0 +1,30 @@
+{
+  "database": {
+    "url": "postgresql+psycopg://user:password@host:5432/fkb_prm",
+    "sqlite_source_url": "sqlite:///data/prm_stats.sqlite",
+    "migration": {
+      "overwrite_target": false
+    }
+  },
+  "station_iata": "CGN",
+  "paths": {
+    "data_dir": "data",
+    "import_dir": "data",
+    "export_dir": "data",
+    "wch_mapping_file": "Q:\\path\\to\\WCH_Typ_reinform.xlsx",
+    "destination_mapping_file": "Q:\\path\\to\\Destination_3letter.xlsx",
+    "airline_mapping_file": "Q:\\path\\to\\airlines.json"
+  },
+  "gui": {
+    "width": 1100,
+    "height": 700
+  },
+  "filters": {
+    "default": {
+      "month": null,
+      "in_out": null,
+      "airline": null,
+      "wch_type": null
+    }
+  }
+}
